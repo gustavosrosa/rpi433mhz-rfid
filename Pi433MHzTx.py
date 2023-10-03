@@ -1,174 +1,228 @@
 #!/usr/bin/python
+# /\ este comentário acima é necessário para o interpretador do raspberry.
 
-# Pi433MHz - 433MHz Data Reciever and Decoder
-# Copyright (C) 2019 Jason Birch
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#/************************************************************************************************************************/
+#/* Pi433MHzTx - Script para transmitir dados fornecidos através de um modulo 433MHz.                                    */
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* Exemplo do tipo de estrutura de dados recomendada para transmitissão:                                                */
+#/* ASSINATURA [4 bytes] -  Identificador unico para ser enviado junto com o pacote de dados.                            */
+#/* COMPRIMENTO DADOS [1 byte] -  Número total de bytes do tamanho da mensagem sendo transmitida.                        */
+#/* DADOS [1-255 bytes] -  Uma lista com os dados que são enviados encriptados. (*só pode ter 255 bytes??)               */ # provavelmente pq o comprimento só comporta 1 byte de tamanho
+#/* CHECKSUM [1 byte] -  Um valor de checksum dos dados enviados para verificar integridade.                             */
+#/************************************************************************************************************************/
 
-#/****************************************************************************/
-#/* Pi433MHzTx - 433MHz Transmit specified data.                             */
-#/* ------------------------------------------------------------------------ */
-#/* V1.00 - 2019-07-31 - Jason Birch                                         */
-#/* ------------------------------------------------------------------------ */
-#/* Script for transmitting data provided on a 433MHz module.                */
-#/*                                                                          */
-#/* Example of the recomended type of data structure to transmit:            */
-#/* SIGNITURE [4 bytes] - Unique identifier for each type of data being sent.*/
-#/* DATA LEN [1 byte]   - Total number of bytes being transmitted.           */
-#/* DATA [1-255 bytes]  - Encrypted data.                                    */
-#/* CHECKSUM [1 byte]   - A checksum of the data sent to verify integrity.   */                                                                        */
-#/****************************************************************************/
 
 import os
 import sys
-import math
+import math # *Precisa mesmo de todas essas bibliotecas sendo importadas sem uso aqui?
 import time
 import hashlib
 import datetime
 import RPi.GPIO
 
 
+#/* -------------------------------------------------------------------------------------------------------------------- */
+# Definição das constantes (*elas devem basicamente ser sincronizadas com as do programa receptor.)
+#/* -------------------------------------------------------------------------------------------------------------------- */
 
-# Number of command line arguments.
-ARG_COUNT = 2
-# Data to send command line argument.
-ARG_EXE = 0
-ARG_DATA = 1
-
-# GPIO Pin connected to 433MHz receiver.
-GPIO_RX_PIN = 26
-# GPIO Pin connected to 433MHz transmitter.
-GPIO_TX_PIN = 19
-
-# GPIO level to switch transmitter off.
-TX_OFF_LEVEL = 1
-# GPIO level to switch transmitter on.
-TX_ON_LEVEL = 0
-# Period to signify end of Tx message.
-TX_END_PERIOD = 0.01
-# Single level period, one period is a binary 0, two periods are a binary 1. 
-TX_LEVEL_PERIOD = 0.002
-# Start bits transmitted to signify start of transmission.
-TX_START_BITS = 1
-
-# Data encryption key.
-ENCRYPTION_KEY = [ 0xC5, 0x07, 0x8C, 0xA9, 0xBD, 0x8B, 0x48, 0xEF, 0x88, 0xE1, 0x94, 0xDB, 0x63, 0x77, 0x95, 0x59 ]
-# Data packet identifier.
-PACKET_SIGNATURE = [ 0x63, 0xF9, 0x5C, 0x1B ]
+# Numero de parâmetros esperados na linha de comando (o EXE.py e os DADOS).
+PARAMETROS_COUNT = 2
+# A posição deste executável.py escrito na linha de comando chamando o programa.
+PARAMETRO_EXE = 0
+# A posição dos dados escritos na linha de comando chamando o programa.
+PARAMETRO_DADOS = 1
 
 
+# Define o pino GPIO conectado ao receptor 433MHz.
+PINO_GPIO_RX = 26
+# Define o pino GPIO conectado ao transmissor 433MHz.
+PINO_GPIO_TX = 19
 
-# Data packet to transmit.
-DataPacket = {
-   "SIGNATURE": PACKET_SIGNATURE,
-   "DATA_LENGTH": 0,
-   "DATA": [],
+# ** Essas constantes estão invertidas pelo possível uso de um NPN, caso não usar inverte-las.**
+# Nível GPIO para desligar o transmissor.
+NIVEL_TX_OFF = 1
+# Nível GPIO para ligar o transmissor.
+NIVEL_TX_ON = 0
+
+
+# Período de sleep (em segundos) para considerar o fim da mensagem de dados Tx.
+# *vai receber aproximadamente 10 períodos com o transmissor desligado,
+# assim identificando que acabou a transmissão???
+PERIODO_FIM_TX = 0.01
+# Período de cada nível único (em segundos), ![um período é um "0" binário, dois períodos são um "1" binário].
+PERIODO_NIVEL_TX = 0.002
+
+
+# Quantidade de vezes fazendo a transmissão de bits iniciais para considerar o começo da transmissão.
+# **(pelo q entendi é o quanto de vezes é para transmitir um bit pelo período TX LEVEL PERIOD
+# para o programa identificar o começo da transmissão, não há necessidade de modificar aparentemente,
+# e provavelmente está relacionado com uma variável de mesmo valor no script de recepção, por propósitos de sincronia).
+BITS_INICIAIS_TX = 1
+
+
+# Chave de encriptação de dados. (Usada no método de encriptação aplicado aqui,
+# pode ser modificada ou trocada de acordo com nossa vontade ou necessidade, só precisa combinar com a do programa Rx)
+CHAVE_CRIPTOGRAFIA = [ 0xC5, 0x07, 0x8C, 0xA9, 0xBD, 0x8B, 0x48, 0xEF, 0x88, 0xE1, 0x94, 0xDB, 0x63, 0x77, 0x95, 0x59 ]
+# Assinatura de identificação do pacote de dados (*só precisa combinar com a do programa Rx).
+# São os 4 primeiros bytes a serem enviados para serem reconhecidos como uma mensagem
+ASSINATURA_PACOTE = [ 0x63, 0xF9, 0x5C, 0x1B ] # Aparentemente são só caracteres hexadecimais aleatórios ("c", "ù", "\", "ESC")
+
+
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* -------------------------------------------------------------------------------------------------------------------- */
+
+# Definição do pacote de dados [em formato de dicionário] para transmissão.
+# Está em ordem lógica que deve chegar no receptor, primeiro a assinatura para identificar que é uma mensagem,
+# depois o tamanho dos dados para se preparar, então os dados em si, e por fim o checksum para confirmação de integridade dos dados.
+PacoteDados = {
+   "ASSINATURA": ASSINATURA_PACOTE,
+   "COMPRIMENTO_DADOS": 0,
+   "DADOS": [],
    "CHECKSUM": 0,
 }
 
 
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* -------------------------------------------------------------------------------------------------------------------- */
 
-# Transmit a byte of data from the 433MHz module.
-def Tx433Byte(Byte):
-   global CurrentTxLevel
+# Transmite um byte inteiro de dados por vez pelo módulo 433MHz (apenas funciona, melhor não querer mexer).
+def TransmiteByte433(Byte):
+   global NivelAtualTx # *Fato curioso, se quiser modificar uma variável externa dentro do contexto da função precisa declará-la como global aqui dentro. 
 
    BitMask = (1 << 7)
    for BitCount in range(8):
-      # Get the next bit from the byte to transmit.
+      # Pega o próximo bit dentro do byte para transmitir.
       Bit = (Byte & BitMask)
       BitMask = int(BitMask / 2)
 
-      # Toggle GPIO level.
-      if CurrentTxLevel == TX_OFF_LEVEL:
-         CurrentTxLevel = TX_ON_LEVEL
+      # Troca o nível GPIO.
+      # (essa parte só inverte o sinal de ON pra OFF, então pelo que eu entendi os sinais de nível
+      # HIGH e LOW são transmitidos através dos "períodos", seja com o sinal ligado ou desligado no transmissor,
+      # e não através de "sinal ON = high e OFF = low", por exemplo)
+      if NivelAtualTx == NIVEL_TX_OFF:
+         NivelAtualTx = NIVEL_TX_ON
+
       else:
-         CurrentTxLevel = TX_OFF_LEVEL
-      RPi.GPIO.output(GPIO_TX_PIN, CurrentTxLevel)
-      # Bit 0 level period.
-      time.sleep(TX_LEVEL_PERIOD)
-      # Bit 1 level additional period.
+         NivelAtualTx = NIVEL_TX_OFF
+      RPi.GPIO.output(PINO_GPIO_TX, NivelAtualTx)
+      
+      # Período de transmissão padrão para bit nível 0. (como explicado ali em cima, [1 período = 0 binário])
+      time.sleep(PERIODO_NIVEL_TX)
+
+      # Período adicional para bit nível 1. ([2 períodos = 1 binário])
       if Bit > 0:
-         time.sleep(TX_LEVEL_PERIOD)
+         time.sleep(PERIODO_NIVEL_TX)
 
 
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* -------------------------------------------------------------------------------------------------------------------- */
 
-# A very basic encrypt/decript function, for keeping demonstration code simple. Use a comprehensive function in production code.
-def BasicEncryptDecrypt(Data):
-   KeyCount = 0
-   KeyLen = len(ENCRYPTION_KEY)
-   for Count in range(len(Data)):
-      Data[Count] ^= ENCRYPTION_KEY[KeyCount]
-      if KeyCount >= KeyLen:
-         KeyCount = 0
+# Uma função provisória de des/encriptação extremamente básica, apenas por propósitos demonstrativos.
+# *Utiliza a chave para modificar os caracteres diretamente na lista com os dados que entra nessa função (PacoteDados["DADOS"]).
+# *Fato curioso 2, nessa função não precisa declarar a variável externa como global para modificar ela,
+# pois ela é uma lista nesse caso, e as variáveis listas são referências à memória que é diretamente modificada, não só sua instância.
+def Criptografa(Dados):
+   ChaveCount = 0
+   TamanhoChave = len(CHAVE_CRIPTOGRAFIA)
+   for count in range(len(Dados)):
+      Dados[count] ^= CHAVE_CRIPTOGRAFIA[ChaveCount]
+      if ChaveCount >= TamanhoChave:
+         ChaveCount = 0
 
 
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* -------------------------------------------------------------------------------------------------------------------- */
 
-#  /*******************************************/
-# /* Configure Raspberry Pi GPIO interfaces. */
-#/*******************************************/
+# Configuração das interfaces GPIO do Raspberry.
 RPi.GPIO.setwarnings(False)
 RPi.GPIO.setmode(RPi.GPIO.BCM)
-RPi.GPIO.setup(GPIO_RX_PIN, RPi.GPIO.IN, pull_up_down=RPi.GPIO.PUD_UP)
-RPi.GPIO.setup(GPIO_TX_PIN, RPi.GPIO.OUT, initial=TX_OFF_LEVEL)
+RPi.GPIO.setup(PINO_GPIO_RX, RPi.GPIO.IN, pull_up_down=RPi.GPIO.PUD_UP)
+RPi.GPIO.setup(PINO_GPIO_TX, RPi.GPIO.OUT, initial=NIVEL_TX_OFF)
 
 
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* -------------------------------------------------------------------------------------------------------------------- */
 
-# Check for command line argument.
-if len(sys.argv) < ARG_COUNT:
-   sys.stdout.write("\n" + sys.argv[ARG_EXE] + " [SEND_DATA]\n\n")
+# -- PROGRAMA "PRINCIPAL":
+
+# Checagem pelo parâmetro na linha de comando, caso não esteja como esperado.
+if len(sys.argv) < PARAMETROS_COUNT:
+   sys.stdout.write("\n" + sys.argv[PARAMETRO_EXE] + " [INSERIR DADOS]\n\n")
+
+# (*colaboração minha) Checando se foram inseridos mais parâmetros além do esperado no comando.
+elif len(sys.argv) > PARAMETROS_COUNT:
+   sys.stdout.write("\n" + sys.argv[PARAMETRO_EXE] + " [ENTRADA INVALIDA]\n\n")
+
+#/* -------------------------------------------------------------------------------------------------------------------- */
+
+# Se o parâmetro estiver correto, colocar os dados dentro do pacote e definir os valores do pacote.
 else:
-   # Place data into data packet and set packet values ready to be sent.
-   DataPacket["DATA_LENGTH"] = len(sys.argv[ARG_DATA])
-   #Tokenise and encrypt data to be sent.
-   DataPacket["DATA"] = list(sys.argv[ARG_DATA])
-   for Count in range(len(DataPacket["DATA"])):
-      DataPacket["DATA"][Count] = ord(DataPacket["DATA"][Count])
-   BasicEncryptDecrypt(DataPacket["DATA"])
-   # Calculate checksum of data for transmission validation.
-   DataPacket["CHECKSUM"] = 0
-   for Byte in DataPacket["DATA"]:
-      DataPacket["CHECKSUM"] ^= Byte
+   # Registrando o tamanho dos dados a serem enviados (quantidade de bytes, *eu acho*).
+   PacoteDados["COMPRIMENTO_DADOS"] = len(sys.argv[PARAMETRO_DADOS])
 
-   # Display data packet being sent.
-   sys.stdout.write("\nSENDING PACKET:\n")
-   sys.stdout.write(str(DataPacket) + "\n\n")
 
-   # Switch on 433MHz transmitter.
-   CurrentTxLevel = TX_ON_LEVEL
-   RPi.GPIO.output(GPIO_TX_PIN, CurrentTxLevel)
-   # Wait for the number of start bits.
-   for Count in range(TX_START_BITS):
-      time.sleep(TX_LEVEL_PERIOD)
+   # Tokenizando e encriptando os dados a serem enviados.
+   # **Para sanar nossa dúvida anterior eu testei essa função de "list(sys.argv)" e confirmo que ela devolve
+   # os dados com cada caractére devidamente separado e pronto na lista, simples assim, por isso já é uma lista.
+   PacoteDados["DADOS"] = list(sys.argv[PARAMETRO_DADOS])
 
-   # Transmit data packet signature.
-   for Byte in DataPacket["SIGNATURE"]:
-      Tx433Byte(Byte)
+   # Faz a encriptação dos dados em PacoteDados["DADOS"], de um jeito meio dificil de compreender.
+   # *O que essa parte "ord" da função faz?
+   for count in range(len(PacoteDados["DADOS"])):
+      PacoteDados["DADOS"][count] = ord(PacoteDados["DADOS"][count])
+   Criptografa(PacoteDados["DADOS"])
 
-   # Transmit data packet data length.
-   Tx433Byte(DataPacket["DATA_LENGTH"])
 
-   # Transmit data packet encrypted data.
-   for Byte in DataPacket["DATA"]:
-      Tx433Byte(Byte)
+   # Cálculo do valor de checksum dos dados para validação da transmissão.
+   PacoteDados["CHECKSUM"] = 0
+   for Byte in PacoteDados["DADOS"]:
+      PacoteDados["CHECKSUM"] ^= Byte
 
-   # Transmit data packet data checksum.
-   Tx433Byte(DataPacket["CHECKSUM"])
+#/* -------------------------------------------------------------------------------------------------------------------- */
 
-   # Switch off 433MHz transmitter.
-   CurrentTxLevel = TX_OFF_LEVEL
-   RPi.GPIO.output(GPIO_TX_PIN, CurrentTxLevel)
+   # *A partir daqui a lógica está toda pronta e o pacote será apenas enviado.
+   # Exibe no console o pacote de dados sendo enviado.
+   sys.stdout.write("\nENVIANDO PACOTE:\n")
+   sys.stdout.write(str(PacoteDados) + "\n\n")
 
-   # End of transmission period.
-   time.sleep(TX_END_PERIOD)
 
+   # Liga o transmissor 433MHz.
+   NivelAtualTx = NIVEL_TX_ON
+   RPi.GPIO.output(PINO_GPIO_TX, NivelAtualTx)
+   
+
+   # Espera pelo número de bits iniciais.
+   for count in range(BITS_INICIAIS_TX):
+      time.sleep(PERIODO_NIVEL_TX)
+
+
+   # Transmite a assinatura de identificação do pacote de dados, byte por byte.
+   for Byte in PacoteDados["ASSINATURA"]:
+      TransmiteByte433(Byte)
+
+   # Transmite o número do comprimento dos dados no pacote de dados, byte por byte.
+   TransmiteByte433(PacoteDados["COMPRIMENTO_DADOS"])
+
+   # Transmite os dados encriptados do pacote de dados, byte por byte.
+   for Byte in PacoteDados["DADOS"]:
+      TransmiteByte433(Byte)
+
+   # Transmite o valor de checksum dos dados do pacote de dados, byte por byte.
+   TransmiteByte433(PacoteDados["CHECKSUM"])
+
+   # Desliga o transmissor 433MHz.
+   NivelAtualTx = NIVEL_TX_OFF
+   RPi.GPIO.output(PINO_GPIO_TX, NivelAtualTx)
+
+
+   # *Apenas exibe no console que o pacote de dados foi enviado.
+   sys.stdout.write("\n[PACOTE ENVIADO]\n")
+
+   # Fim do período de transmissão e do programa.
+   time.sleep(PERIODO_FIM_TX)
+
+
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* -------------------------------------------------------------------------------------------------------------------- */
