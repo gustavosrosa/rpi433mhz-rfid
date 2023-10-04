@@ -16,6 +16,7 @@
 # não teria como avisar o programa se o próximo byte ainda representa o "tamanho dos dados" ou se já começa a representar os "dados", então por padrão
 # o programa presume que serão os dados já, limitando a 1 byte para a representação do "tamanho dos dados".
 # *Obs.: Não é impossível modificar o programa para esperar 2 bytes representando o tamanho dos dados, a questão é se seria relevante fazer isso.
+# *Obs2.: Se o "tamanho da mensagem" conter 2 bytes, o tamanho máximo da mensagem passa de 255 caracteres para 65.535, só uma simples observação.
 
 
 import os
