@@ -1,8 +1,6 @@
 /* -------------------------------------------------------------------------------- */
 /* -------------------------------------------------------------------------------- */
-
-/.Lendo Dados Sendo Transmitidos Por Uma Chave De Carro A 433MHz Com Um Raspberry Pi./
-
+/.   TRANSMITINDO E RECEBENDO DADOS ATRAVÉS DO MÓDULO RF 433 MHZ COM RASPBERRY PI   ./
 /* -------------------------------------------------------------------------------- */
 /* -------------------------------------------------------------------------------- */
 
@@ -18,9 +16,12 @@
 
  -- Pi433MHz.py = Versão obsoleta do código que utiliza desnecessariamente POO e fica
                     recebendo sinais de RF do ambiente com possível relevância.
-                    (p.s: pode ser usado para monitorar nossos dados enviados e
+                    (Obs.1: pode ser usado para monitorar nossos dados enviados e
                     exibi-los em vários formatos, por propósitos de teste, já
                     que adicionalmente também monitora a quantidade de ruído.)
+                    (Obs.2: pessoalmente, esse arquivo é muito grande e bagunçado
+                    comparado aos outros, então [exceto por propósitos de teste]
+                    eu recomendo não trabalharmos muito em cima dele.)
 
  -- Pi433MHzRxMatch.py = Recebe dados assim como o "...Rx.py", mas no final tem um tratamento
                     para verificar um possível "match" dos dados recebidos e então executar
@@ -28,7 +29,7 @@
                     (p.s: Essa parte do código pode ser facilmente implementada para o
                     "...Rx.py", caso seja necessário, caso contrário esse arquivo é dispensável)
                     
-        - Pi433MHzRxMatch.ini = Define os caminhos de arquivos ".sh" em caso de um match.
+        - Pi433MHzRxMatch.ini = Define os caminhos de arquivos ".sh" em caso de um "match".
         - Pi433MHzRxMatch1.sh = Arquivo de exemplo ".sh" indicando a execução de um "match".
         - Pi433MHzRxMatch2.sh = Arquivo de exemplo ".sh" indicando a execução de outro "match".
 
@@ -105,7 +106,7 @@ dados transmitido pela aplicação Pi433MHzTx.py.
 Com um fio de aterramento no centro através da bobina.
 
 *Obs.: Eu sei que parece que não faz sentido o que eu escrevi aqui, eu só traduzi
-diretamente cada palavra que estava escrita em inglês, então também não sei.
+diretamente cada palavra que estava escrita em inglês, então também não sei exatamente.
 
 
 /* -------------------------------------------------------------------------------- */

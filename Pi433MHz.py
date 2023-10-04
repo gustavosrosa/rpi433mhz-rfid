@@ -11,8 +11,9 @@
 
 import os
 import sys
-import math
+import math # *Precisa mesmo de todas essas bibliotecas sendo importadas sem uso aqui?
 import time
+import hashlib
 import datetime
 import RPi.GPIO
 
@@ -21,15 +22,13 @@ import RPi.GPIO
 # Definição das constantes.
 #/* -------------------------------------------------------------------------------------------------------------------- */
 
-# Pino GPIO conectado ao receptor 433MHz:
+# Define o pino GPIO conectado ao receptor 433MHz.
 PINO_GPIO_RX = 26
-# Pino GPIO conectado ao transmissor 433MHz:(neste código não há uso além de garantir que ele está desligado.)
+# Define o pino GPIO conectado ao transmissor 433MHz.
 PINO_GPIO_TX = 19
 
 
-# Colocando linhas de dados ruins no arquivo log.
-REGISTRAR_DADOS_RUINS = False
-
+# ** Essa constante está invertida pelo possível uso de um NPN, caso não usar, inverte-la.**
 # Nível GPIO para desligar o transmissor.
 NIVEL_TX_OFF = 1
 
@@ -50,6 +49,10 @@ PERIODO_REJEITAR_RX = 0.000005
 BITS_INICIAIS_RX = 1
 # Tamanho da assinatura Rx, quantidade de valores hexadecimais para usar como assinatura.
 TAMANHO_ASSINATURA_RX = 4
+
+
+# Colocando linhas de dados ruins no arquivo log.
+REGISTRAR_DADOS_RUINS = False
 
 
 # Nomes dos campos de dados Rx.
