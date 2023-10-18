@@ -1,76 +1,145 @@
-# Copyright (C) 2019 Jason Birch
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+/* -------------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------------- */
+/.   TRANSMITINDO E RECEBENDO DADOS ATRAVÉS DO MÓDULO RF 433 MHZ COM RASPBERRY PI   ./
+/* -------------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------------- */
+
+-- VIDEOS DESTE PROJETO E CÓDIGO FONTE NO GITHUB (*NO FINAL DESTE TEXTO!*)
+
+/* -------------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------------- */
+
+-- Aplicações
+==============
+
+*ATENÇÃO* - Sumário geral sobre as aplicações contidas aqui e quais são mais relevantes:
+
+ -- Pi433MHz.py = Versão obsoleta do código que utiliza desnecessariamente POO e fica
+                    recebendo sinais de RF do ambiente com possível relevância.
+                    (Obs.1: pode ser usado para monitorar nossos dados enviados e
+                    exibi-los em vários formatos, por propósitos de teste, já
+                    que adicionalmente também monitora a quantidade de ruído.)
+                    (Obs.2: pessoalmente, esse arquivo é muito grande e bagunçado
+                    comparado aos outros, então [exceto por propósitos de teste]
+                    eu recomendo não trabalharmos muito em cima dele.)
+
+ -- Pi433MHzRxMatch.py = Recebe dados assim como o "...Rx.py", mas no final tem um tratamento
+                    para verificar um possível "match" dos dados recebidos e então executar
+                    algum comando ou outra aplicação.
+                    (p.s: Essa parte do código pode ser facilmente implementada para o
+                    "...Rx.py", caso seja necessário, caso contrário esse arquivo é dispensável)
+                    
+        - Pi433MHzRxMatch.ini = Define os caminhos de arquivos ".sh" em caso de um "match".
+        - Pi433MHzRxMatch1.sh = Arquivo de exemplo ".sh" indicando a execução de um "match".
+        - Pi433MHzRxMatch2.sh = Arquivo de exemplo ".sh" indicando a execução de outro "match".
+
+ -- LogSignatures.sh = Aparentemente é um log de assinaturas recebidas no "Pi433MHz.py",
+                    mas não está sendo utilizado em nenhum código então não tenho certeza.
+
+ -- Pi433MHzTx.py = Programa principal que envia dados a 433MHz, *relevante para o nosso uso!
+ -- Pi433MHzRx.py = Programa principal que recebe dados a 433MHz, *relevante para o nosso uso!
+
+
+*A seguir a descrição mais detalhada sobre a funcionalidade dessas aplicações*
+
+
+/* -------------------------------------------------------------------------------- */
+
+./Pi433MHz.py
+
+- Monitora e loga dados. Proporciona várias visualizações dos dados sendo recebidos.
+Permite a análise e identificação de dados requeridos transmitidos através de 433MHz.
+Também apresenta um contador de ruído, o qual indica quanta interferência de RF
+(RFI) há no local, proporcionando um método para encontrar uma região com baixa 
+interferência para localizar uma transmissão, melhorando assim a confiabilidade da
+recepção de dados.
+
+
+/* -------------------------------------------------------------------------------- */
+
+./Pi433MHzRxMatch.py
+
+- Uma aplicação de exemplo que identifica dados específicos sendo transmitidos e
+permite rodar uma aplicação dependendo de qual série de assinaturas de dados
+correspondentes identificadas. Dados de configuração em formato de uma lista de
+assinaturas de dados e comandos a serem executados estão no arquivo Pi433MHzRxMatch.ini.
+
+
+/* -------------------------------------------------------------------------------- */
+
+./LogSignatures.sh
+
+- Sumário das assinaturas recebidas e logadas com a aplicação Pi433MHz.py.
+Juntamente com o número de ocorrências, como uma assistência para identificar
+dados requeridos sendo recebidos.
+
+
+/* -------------------------------------------------------------------------------- */
+
+./Pi433MHzTx.py
+
+- Uma aplicação de exemplo para pegar uma string em ASCII como parâmetro de linha
+de comando, a qual será então transmitida por 433MHz como parte de um pacote de
+dados. O pacote permite que os dados sejam checados por integridade na recepção
+no caso de ocorrer a corrupção durante a transmissão(checksum). Demonstra também uma
+encriptação básica dos dados para transmissão. A aplicação Pi433MHzRx.py pode
+ser usada para receber e exibir esses dados desencriptados.
+
+- Exemplo de uso no prompt de comando:
+./Pi433MHzTx.py 'test message'
+
+
+/* -------------------------------------------------------------------------------- */
+
+./Pi433MHzRx.py
+
+- Uma aplicação de exemplo para receber, validar, desencriptar e exibir um pacote de
+dados transmitido pela aplicação Pi433MHzTx.py.
+
+
+/* -------------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------------- */
+
+-- Antena (explorar mais afundo sobre o cálculo da antena)
+===========================================================
+"17cm 'wound', 5mm diâmetro espaçado para 20mm de fio de cobre esmaltado 0.5mm."
+Com um fio de aterramento no centro através da bobina.
+
+*Obs.: Eu sei que parece que não faz sentido o que eu escrevi aqui, eu só traduzi
+diretamente cada palavra que estava escrita em inglês, então também não sei exatamente.
+
+
+/* -------------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------------- */
+
+-- Vídeos:
+===========
+
+= Sending Data Between Two Raspberry Pi on 433MHz with a Python Script:
+https://www.youtube.com/watch?v=qpavpA3zjis
+
+= Reading Data Transmitted From Keyfobs At 433MHz With A Raspberry Pi:
+https://www.youtube.com/watch?v=8B582TMMSNY
 
 
 
-Reading Data Transmitted From A Car Key-fob At 433MHz With A Raspberry Pi
+= Raspberry Pi 433MHz/315MHz Removing Signal Noise For Better Reception:
+https://www.youtube.com/watch?v=vxF1N9asjts
+
+= Explicação boa sobre ASK e OOK, e cálculo para a antena nos módulos(~5:00):
+https://www.youtube.com/watch?v=w6V9NyXwohI
+
+= Modelos diferentes de transceptores RF:
+https://www.youtube.com/watch?v=nP6YuwNVoPU
 
 
-Patreon, donations help produce more OpenSource projects:
-https://www.patreon.com/_DevelopIT
+/* -------------------------------------------------------------------------------- */
 
-Videos of this project:
-https://youtu.be/8B582TMMSNY
-
-Source Code on GitHub:
+-- Código Fonte no GitHub:
 https://github.com/BirchJD/RPi_433MHz
 
 
-
-Applications
-============
-
-./Pi433MHz.py
-Start monitoring and logging data. To provide various views of the data being
-received. Allowing analysis and identification of required data transmitted
-on 433MHz. Also provides a noise count, which indicates how much local RF
-interference (RFI) is being experienced, providing a method of locating the
-device in a location with low interference noise, improving reliability of
-data reception.
-
-./LogSignatures.sh
-Summary of transmitted signatures received and logged with the Pi433MHz.py
-application. Along with the number of occurrences, as an aid to identifying
-required data being received.
-
-./Pi433MHzRxMatch.py
-An example application which identifies specific data being transmitted and
-allows an application to be run depending on which of a series of matching
-data signatures is identified. Configuration data as a list of data
-signatures and commands to execute are placed in the file Pi433MHzRxMatch.ini.
-
-./Pi433MHzTx.py
-An example application to take an ASCII string as a command line argument,
-which will then be transmitted over 433MHz as part of a data package. The
-data package allows the data to be checked for validity on reception in case of
-transmission/reception corruption. Demonstrates a basic encryption of the data
-on transmission. The Pi433MHz.py application can be used to receive and display
-the encrypted data packet. And the Pi433MHzRx.py application can be used to
-receive and display the unencrypted data.
-e.g.
-./Pi433MHzTx.py 'Sending test message.'
-
-./Pi433MHzRx.py
-An example application to receive validate, unencrypt and display a packet of
-data transmitted from the Pi433MHzTx.py application.
-
-
-
-Aerial
-======
-17cm wound at 5mm diameter spaced to 20mm of 0.5mm enamelled copper wire.
-With center ground wire through the coil.
-
-
+/* -------------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------------- */

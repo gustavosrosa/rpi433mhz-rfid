@@ -1,180 +1,211 @@
 #!/usr/bin/python
+# /\ este comentário acima é necessário para o interpretador do raspberry.
 
-# Pi433MHz - 433MHz Data Reciever and Decoder
-# Copyright (C) 2019 Jason Birch
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-#/****************************************************************************/
-#/* Pi433MHzRx - 433MHz Received data recognition and reaction.              */
-#/* ------------------------------------------------------------------------ */
-#/* V1.00 - 2019-07-31 - Jason Birch                                         */
-#/* ------------------------------------------------------------------------ */
-#/* Script for monitoring a 433MHz and running scripts for recognised data   */
-#/* types. This script assumes data encoding of short level = binary 0,      */
-#/* long level = binary 1.                                                   */
-#/****************************************************************************/
-
+#/************************************************************************************************************************/
+#/* Pi433MHzRxMatch - 433MHz Reconhecimento e reação aos dados recebidos.                                                */
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* Script para monitorar em 433MHz e scripts rodando para tipos de dados reconhecidos.                                  */
+#/* Esse script presume a codificação de dados como nível curto = binary 0, e nível longo = binary 1.                 */
+#/************************************************************************************************************************/
 
 
 import os
 import sys
-import math
+import math # *Precisa mesmo de todas essas bibliotecas sendo importadas sem uso aqui?
 import time
+import hashlib
 import datetime
 import RPi.GPIO
 
 
+#/* -------------------------------------------------------------------------------------------------------------------- */
+# Definição das constantes (*elas devem basicamente ser sincronizadas com as do programa transmissor.)
+#/* -------------------------------------------------------------------------------------------------------------------- */
 
-# GPIO Pin connected to 433MHz receiver.
-GPIO_RX_PIN = 26
-# GPIO Pin connected to 433MHz transmitter.
-GPIO_TX_PIN = 19
-
-# GPIO level to switch transmitter off.
-TX_OFF_LEVEL = 1
-# Period of no RX data to consider end of RX data message.
-RX_END_PERIOD = 0.01
-# Smallest period of high or low signal to consider noise rather than data, and flag as bad data. 
-RX_REJECT_PERIOD = 0.000005
-# Minimum number of bytes of data received to be considered valid.
-MIN_RX_BYTES = 4
-# Log received data which does not match.
-LOG_NO_MATCH = False
-
-# Config data fields:
-CONFIG_ELEMENT_MATCH = 0
-CONFIG_ELEMENT_COMMAND = 1
+# Define o pino GPIO conectado ao receptor 433MHz.
+PINO_GPIO_RX = 26
+# Define o pino GPIO conectado ao transmissor 433MHz.
+PINO_GPIO_TX = 19
 
 
-
-# Read a configuration data file.
-def LoadConfig():
-   ConfigData = []
-   File = open("Pi433MHzRxMatch.ini", 'r', 0)
-   TextLine = "."
-   while TextLine != "":
-      TextLine = File.readline().replace("\n", "")
-      if TextLine != "":
-         Element = TextLine.split("=")
-         ConfigData.append(Element)
-   File.close()
-   
-   return ConfigData
+# ** Essa constante está invertida pelo possível uso de um NPN, caso não usar, inverte-la.**
+# Nível GPIO para desligar o transmissor.
+NIVEL_TX_OFF = 1
 
 
+# Período de sleep (em segundos) para considerar o fim da mensagem de dados Rx.
+PERIODO_FIM_RX = 0.01
+# Menor período de sinal alto ou baixo para considerar como ruído.
+# ao invés de dados, e sinalizar como dados ruins.
+PERIODO_REJEITAR_RX = 0.000005
 
-#  /*******************************************/
-# /* Configure Raspberry Pi GPIO interfaces. */
-#/*******************************************/
+
+# Número mínimo de bytes de dados recebidos para serem considerados dados válidos.
+MINIMO_BYTES_RX = 4
+# Registrar no "Log" dados recebidos que não derem "match". 
+REGISTRAR_SEM_MATCH = False
+
+
+# Campos de dados da configuração.
+CONFIG_ELEMENTO_MATCH = 0
+CONFIG_ELEMENTO_COMANDO = 1
+
+
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* -------------------------------------------------------------------------------------------------------------------- */
+
+# Lê o arquivo de dados de configuração.
+def CarregaConfig():
+   DadosConfig = []
+   Arquivo = open("Pi433MHzRxMatch.ini", 'r', 0)
+   LinhaDeTexto = "."
+   while LinhaDeTexto != "":
+      LinhaDeTexto = Arquivo.readline().replace("\n", "")
+      if LinhaDeTexto != "":
+         Elemento = LinhaDeTexto.split("=")
+         DadosConfig.append(Elemento)
+   Arquivo.close()
+   return DadosConfig
+
+
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* -------------------------------------------------------------------------------------------------------------------- */
+
+# Inicializando os dados em variáveis.
+BuscaBitsIniciais = True
+EstePeriodo = PERIODO_FIM_RX
+PeriodoBitInicial = PERIODO_FIM_RX
+PeriodoBitPassado = PERIODO_FIM_RX
+NivelGpioPassado = 1
+BitCount = 0
+DadosByteCount = 0
+DadosByte = []
+
+
+# Lendo os dados de configuração.
+DadosConfig = CarregaConfig()
+
+
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* -------------------------------------------------------------------------------------------------------------------- */
+
+# Configuração das interfaces GPIO do Raspberry.
 RPi.GPIO.setwarnings(False)
 RPi.GPIO.setmode(RPi.GPIO.BCM)
-RPi.GPIO.setup(GPIO_RX_PIN, RPi.GPIO.IN, pull_up_down=RPi.GPIO.PUD_UP)
-RPi.GPIO.setup(GPIO_TX_PIN, RPi.GPIO.OUT, initial=TX_OFF_LEVEL)
+RPi.GPIO.setup(PINO_GPIO_RX, RPi.GPIO.IN, pull_up_down=RPi.GPIO.PUD_UP)
+RPi.GPIO.setup(PINO_GPIO_TX, RPi.GPIO.OUT, initial=NIVEL_TX_OFF)
 
 
-# Initialise data.
-StartBitFlag = True
-ThisPeriod = RX_END_PERIOD
-StartBitPeriod = RX_END_PERIOD
-LastBitPeriod = RX_END_PERIOD
-LastGpioLevel = 1
-BitCount = 0
-ByteDataCount = 0
-ByteData = []
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* -------------------------------------------------------------------------------------------------------------------- */
 
-# Read configuration data.
-ConfigData = LoadConfig()
+# -- PROGRAMA "PRINCIPAL":
 
-# Infinate loop for this application.
-sys.stdout.write("\nWAITING FOR DATA...\n\n")
+# Loop infinito para a aplicação.
+sys.stdout.write("\nAGUARDANDO RECEBIMENTO DE DADOS...\n\n")
 sys.stdout.flush()
 ExitFlag = False
 while ExitFlag == False:
-   # Check if data is currently being received.
-   ThisPeriod = time.time()
-   DiffPeriod = ThisPeriod - LastBitPeriod
+   # Checagem se algum dado está atualmente sendo recebido.
+   EstePeriodo = time.time()
+   DiferencaPeriodo = EstePeriodo - PeriodoBitPassado
 
-   # If data level changes, decode long period = 1, short period = 0.
-   GpioLevel = RPi.GPIO.input(GPIO_RX_PIN)
-   if GpioLevel != LastGpioLevel:
-      # Ignore noise.
-      if DiffPeriod > RX_REJECT_PERIOD:
-         # Wait for start of communication.
-         if StartBitFlag == True:
-            # Calculate start bit period, consider as period for all following bits.
-            if StartBitPeriod == RX_END_PERIOD:
-               StartBitPeriod = ThisPeriod
+#/* -------------------------------------------------------------------------------------------------------------------- */
+
+   # *Parte do programa principal que roda procurando uma transmissão e captura quando achar.
+   # *Enquanto não completar uma transmissão fica em loop nessa parte "if" do código, quando acabar cai no "elif".
+   # Se o nível de dados mudar, decodificar periodo longo = binário 1, periodo curto = binário 0.
+   NivelGpio = RPi.GPIO.input(PINO_GPIO_RX)
+   if NivelGpio != NivelGpioPassado:
+
+      # Ignorar ruído, desconsiderando variações extremamente rápidas e curtas entre os períodos.
+      if DiferencaPeriodo > PERIODO_REJEITAR_RX:
+
+         # Eperando pelo início da comunicação.
+         # Enquanto BuscaBitsIniciais for TRUE ele estará buscando os dados, quando encontrar ele passará para FALSE
+         if BuscaBitsIniciais == True:
+            # Calculando o período de bit inicial, considerando como o período de bit para todos os bits seguintes.
+            if PeriodoBitInicial == PERIODO_FIM_RX:
+               PeriodoBitInicial = EstePeriodo
             else:
-               StartBitPeriod = (ThisPeriod - StartBitPeriod) * 0.90
-               StartBitFlag = False
+               PeriodoBitInicial = (EstePeriodo - PeriodoBitInicial) * 0.90
+               BuscaBitsIniciais = False
+
+         # A recepção de dados foi identificada e eles serão recebidos.
          else:
-            if DiffPeriod < StartBitPeriod:
-               StartBitPeriod = DiffPeriod
+            if DiferencaPeriodo < PeriodoBitInicial:
+               PeriodoBitInicial = DiferencaPeriodo
 
-            # Receiving a data level, convert into a data bit.
-            Bits = int(round(DiffPeriod / StartBitPeriod))
+            # Recebendo um nível de dado, convertendo em um bit de dado.
+            Bits = int(round(DiferencaPeriodo / PeriodoBitInicial))
+
+            # *Fazendo toda a captura e armazenamento dos bits de dados em "DadosByte", através dessa operação abaixo,
+            # primeiramente implementada e explicada no arquivo "Pi433MHz.py".
+            # *Com a contagem de bytes em "DadosByteCount", que depois é passada para a "DadosCount" na parte "elif" do código.
             if BitCount % 8 == 0:
-               ByteData.append(0)
-               ByteDataCount += 1
+               DadosByte.append(0)
+               DadosByteCount += 1
             BitCount += 1
-            ByteData[ByteDataCount - 1] = (ByteData[ByteDataCount - 1] << 1)
+            DadosByte[DadosByteCount - 1] = (DadosByte[DadosByteCount - 1] << 1)
             if Bits > 1:
-                ByteData[ByteDataCount - 1] |= 1
-         LastBitPeriod = ThisPeriod
-      LastGpioLevel = GpioLevel
-   elif DiffPeriod > RX_END_PERIOD:
-      # End of data reception.
-      if ByteDataCount >= MIN_RX_BYTES and StartBitPeriod > RX_REJECT_PERIOD:
-         # Format the byte data in hex format.
-         DataString = ""
-         DataCount = 0
-         for Byte in ByteData:
-            DataString += "{:02X}".format(Byte)
-            DataCount += 1
+                DadosByte[DadosByteCount - 1] |= 1
 
-         # Check for data match, checking from the start of data for the number of bytes in the config data, ignoring the remainder of received data.
+         PeriodoBitPassado = EstePeriodo
+      NivelGpioPassado = NivelGpio
+
+#/* -------------------------------------------------------------------------------------------------------------------- */
+   
+   # *Parte do programa que se for True e cair nesse "elif" chegou no fim da recepção de dados.
+   elif DiferencaPeriodo > PERIODO_FIM_RX:
+      # "if" dados estão OK e não foram insuficientes ou rejeitados, continuar, senão apenas resetar e voltar a buscar.
+      if DadosByteCount >= MINIMO_BYTES_RX and PeriodoBitInicial > PERIODO_REJEITAR_RX:
+
+         # Formata dos bytes de dados em formato hexadecimal.
+         StringDados = ""
+         DadosCount = 0
+         for Byte in DadosByte:
+            StringDados += "{:02X}".format(Byte)
+            DadosCount += 1
+
+         # Checando se há "match" dos dados, checando pelo início dos dados pelo número de bytes nos dados de config, ignorando o resto dos dados recebidos.
          Match = False
-         for ConfigElement in ConfigData:
-            ConfigMatchLen = len(ConfigElement[CONFIG_ELEMENT_MATCH])
-            if ByteDataCount * 2 >= ConfigMatchLen and DataString[:ConfigMatchLen] == ConfigElement[CONFIG_ELEMENT_MATCH]:
+         for ConfigElemento in DadosConfig:
+            ComprimentoConfigMatch = len(ConfigElemento[CONFIG_ELEMENTO_MATCH])
+            if DadosByteCount * 2 >= ComprimentoConfigMatch and StringDados[:ComprimentoConfigMatch] == ConfigElemento[CONFIG_ELEMENTO_MATCH]:
                Match = True
                break
 
-         # Respond to a data match.
+         # Resposta ao "match" dos dados.
          if Match == True:
             Now = datetime.datetime.now()
             sys.stdout.write(Now.strftime("%Y-%m-%d %H:%M:%S\n"))
-            sys.stdout.write("MATCH: " + str(ConfigElement) + "\n")
-            sys.stdout.write("START BIT PERIOD {:f}\n".format(StartBitPeriod))
-            sys.stdout.write(DataString + "\n")
+            sys.stdout.write("MATCH: " + str(ConfigElemento) + "\n")
+            sys.stdout.write("PERIODO DE BIT INICIAL {:f}\n".format(PeriodoBitInicial))
+            sys.stdout.write(StringDados + "\n")
             sys.stdout.flush()
-            os.system(ConfigElement[CONFIG_ELEMENT_COMMAND])
+            os.system(ConfigElemento[CONFIG_ELEMENTO_COMANDO])
             sys.stdout.write("\n\n")
             sys.stdout.flush()
-         elif LOG_NO_MATCH == True:
+         elif REGISTRAR_SEM_MATCH == True:
             Now = datetime.datetime.now()
             sys.stdout.write(Now.strftime("%Y-%m-%d %H:%M:%S\n"))
-            sys.stdout.write("NO MATCH: " + str(ConfigElement) + "\n")
-            sys.stdout.write("START BIT PERIOD {:f}\n".format(StartBitPeriod))
-            sys.stdout.write(DataString + "\n")
+            sys.stdout.write("SEM MATCH: " + str(ConfigElemento) + "\n")
+            sys.stdout.write("PERIODO DE BIT INICIAL {:f}\n".format(PeriodoBitInicial))
+            sys.stdout.write(StringDados + "\n")
             sys.stdout.flush()
 
-      # Reset data to start a new monitor period.
-      StartBitFlag = True
-      StartBitPeriod = RX_END_PERIOD
-      BitCount = 0
-      ByteDataCount = 0
-      ByteData = []
+#/* -------------------------------------------------------------------------------------------------------------------- */
 
+      # Após o fim de uma recepção de dados, resetar as variáveis
+      # para iniciar um novo período de monitoramento.
+      BuscaBitsIniciais = True
+      PeriodoBitInicial = PERIODO_FIM_RX
+      BitCount = 0
+      DadosByteCount = 0
+      DadosByte = []
+
+
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* -------------------------------------------------------------------------------------------------------------------- */

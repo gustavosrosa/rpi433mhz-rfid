@@ -1,330 +1,369 @@
 #!/usr/bin/python
+# /\ este comentário acima é necessário para o interpretador do raspberry.
 
-# Pi433MHz - 433MHz Data Reciever and Decoder
-# Copyright (C) 2019 Jason Birch
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-#/****************************************************************************/
-#/* Pi433MHz - 433MHz Data Reciever and Decoder.                             */
-#/* ------------------------------------------------------------------------ */
-#/* V1.00 - 2019-07-21 - Jason Birch                                         */
-#/* V1.01 - 2019-07-31 - Jason Birch                                         */
-#/*                      Tuned paramaters display noise count to assist      */
-#/*                      positioning of module away from RFI areas.          */
-#/* ------------------------------------------------------------------------ */
-#/* Script for monitoring a 433MHz and displaying packets of data received.  */
-#/****************************************************************************/
-
+#/************************************************************************************************************************/
+#/* Pi433MHz - Script para monitoramento em 433MHz e exibição dos pacotes de dados recebidos.                            */
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* Parametros ajustados mostram a quantidade de ruído para auxiliar                                                     */
+#/* no posicionamento do módulo para longe de áreas com interferência de RF.                                             */
+#/************************************************************************************************************************/
 
 
 import os
 import sys
-import math
+import math # *Precisa mesmo de todas essas bibliotecas sendo importadas sem uso aqui?
 import time
+import hashlib
 import datetime
 import RPi.GPIO
 
 
+#/* -------------------------------------------------------------------------------------------------------------------- */
+# Definição das constantes.
+#/* -------------------------------------------------------------------------------------------------------------------- */
 
-# GPIO Pin connected to 433MHz receiver.
-GPIO_RX_PIN = 26
-# GPIO Pin connected to 433MHz transmitter.
-GPIO_TX_PIN = 19
-
-# Put bad data lines in log file.
-LOG_BAD_DATA = False
-
-# GPIO level to switch transmitter off.
-TX_OFF_LEVEL = 1
-# When converting 5V signal to 3V3 signal for Raspberry Pi GPIO, NPN transistor inverts the signal.
-RX_BIT_INVERT = 1
-# Period of no RX data to consider end of RX data message.
-RX_END_PERIOD = 0.01
-# Smallest period of high or low signal to consider noise rather than data, and flag as bad data. 
-RX_REJECT_PERIOD = 0.000005
-# Ignore extra bits at start of transmission.
-RX_START_BITS = 1
-# RX Signature size, number of hex values to use as a signature.
-RX_SIGNATURE_SIZE = 4
-
-# RX data field names.
-DATA_SEQUENCE = 0
-DATA_RX_PIN = 1
-DATA_LEVEL = 2
-DATA_PERIOD = 3
+# Define o pino GPIO conectado ao receptor 433MHz.
+PINO_GPIO_RX = 26
+# Define o pino GPIO conectado ao transmissor 433MHz.
+PINO_GPIO_TX = 19
 
 
-
-class RxPacket:
-   StartBitCount = RX_START_BITS
-   AltStartBitCount = RX_START_BITS
-   DataCount = 0
-   Data = []
-   BitPeriod = 0
-   LastGpioLevel = RX_BIT_INVERT
-   RxSignatures = {}
+# ** Essa constante está invertida pelo possível uso de um NPN, caso não usar, inverte-la.**
+# Nível GPIO para desligar o transmissor.
+NIVEL_TX_OFF = 1
 
 
-
-# Initialise application data.
-def DataInit(ThisRxPacket):
-   ThisRxPacket.StartBitCount = RX_START_BITS
-   ThisRxPacket.AltStartBitCount = RX_START_BITS
-   ThisRxPacket.DataCount = 0
-   ThisRxPacket.Data = []
-   ThisRxPacket.BitPeriod = 0
-   ThisRxPacket.LastGpioLevel = RX_BIT_INVERT
-
-
-
-# Write a line to the log file.
-def WriteLogLine(LogFile, LogLine):
-   sys.stdout.write(LogLine)
-   LogFile.write(LogLine)
+# Quando convertendo sinal 5V (modulo) para sinal 3.3V (rasp) para o GPIO do Raspberry, o transistor NPN inverte o sinal.
+# (*Só está no código pois o desenvolvedor usou um transistor no circuito que inverte o sinal, se não for o caso
+# é só mudar o valor para "0" ou então remover completamente do código)
+INVERTER_BIT_RX = 1
+# Período sem nenhum dado RX para considerar o fim da mensagem de dados RX.
+# (*No código original esse valor é 1, não sei qual propósito e qual vale mais a pena manter)
+PERIODO_FIM_RX = 0.01
+# Menor período de sinal alto ou baixo para considerar ruído ao invés de dados, e sinalizar como dados ruins.
+# (*No código original esse valor é 0.000020, não sei qual propósito e qual vale mais a pena manter)
+PERIODO_REJEITAR_RX = 0.000005
 
 
-#  /*******************************************/
-# /* Configure Raspberry Pi GPIO interfaces. */
-#/*******************************************/
+# Bits iniciais transmitidos para considerar o começo da recepção.
+BITS_INICIAIS_RX = 1
+# Tamanho da assinatura Rx, quantidade de valores hexadecimais para usar como assinatura.
+TAMANHO_ASSINATURA_RX = 4
+
+
+# Colocando linhas de dados ruins no arquivo log.
+REGISTRAR_DADOS_RUINS = False
+
+
+# Nomes dos campos de dados Rx.
+SEQUENCIA_DADOS = 0
+PINO_DADOS_RX = 1
+NIVEL_DADOS = 2
+PERIODO_DADOS = 3
+
+
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* -------------------------------------------------------------------------------------------------------------------- */
+
+# Classe para armazenar iterações do pacote de dados
+class RxPacote:
+   BitsIniciaisCount = BITS_INICIAIS_RX
+   AltBitsIniciaisCount = BITS_INICIAIS_RX
+   DadosCount = 0
+   Dados = []
+   PeriodoBit = 0
+   NivelGpioPassado = INVERTER_BIT_RX
+   AssinaturasRx = {}
+
+
+# Inicializa dados da aplicação.
+def DataInit(EstePacoteRx):
+   EstePacoteRx.BitsIniciaisCount = BITS_INICIAIS_RX
+   EstePacoteRx.AltBitsIniciaisCount = BITS_INICIAIS_RX
+   EstePacoteRx.DadosCount = 0
+   EstePacoteRx.Dados = []
+   EstePacoteRx.PeriodoBit = 0
+   EstePacoteRx.NivelGpioPassado = INVERTER_BIT_RX
+
+
+# Escreve uma linha no arquivo log
+def EscreveLinhaLog(ArquivoLog, LinhaLog):
+   sys.stdout.write(LinhaLog)
+   ArquivoLog.write(LinhaLog)
+
+
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* -------------------------------------------------------------------------------------------------------------------- */
+
+# Configuração das interfaces GPIO do Raspberry.
 RPi.GPIO.setwarnings(False)
 RPi.GPIO.setmode(RPi.GPIO.BCM)
-RPi.GPIO.setup(GPIO_RX_PIN, RPi.GPIO.IN, pull_up_down=RPi.GPIO.PUD_UP)
-RPi.GPIO.setup(GPIO_TX_PIN, RPi.GPIO.OUT, initial=TX_OFF_LEVEL)
+RPi.GPIO.setup(PINO_GPIO_RX, RPi.GPIO.IN, pull_up_down=RPi.GPIO.PUD_UP)
+# *\/Não tinha no código original pois não tem funcionalidade para transmissão.
+RPi.GPIO.setup(PINO_GPIO_TX, RPi.GPIO.OUT, initial=NIVEL_TX_OFF)
 
-# Initialise a new data packet capture.
-ThisRxPacket = RxPacket
-DataInit(ThisRxPacket)
 
-# Infinate loop for this application.
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* -------------------------------------------------------------------------------------------------------------------- */
+
+# Inicializando uma nova caputra de pacote de dados.
+EstePacoteRx = RxPacote
+DataInit(EstePacoteRx)
+
+#/* -------------------------------------------------------------------------------------------------------------------- */
+
+# Loop infinito para a aplicação.
 ExitFlag = False
-NoiseCount = 0
-LastSecond = 0
-sys.stdout.write("\nWAITING FOR DATA...\n\n")
+RuidoCount = 0
+SegundoPassado = 0
+sys.stdout.write("\nAGUARDANDO RECEBIMENTO DE DADOS...\n\n")
 sys.stdout.flush()
+
 while ExitFlag == False:
-   # Check if data is currently being received.
-   ThisPeriod = time.time()
-   DiffPeriod = ThisPeriod - ThisRxPacket.BitPeriod
-   ThisSecond = int(ThisPeriod)
-   if ThisSecond != LastSecond:
-      sys.stdout.write(" NOISE: {:d}      \r".format(NoiseCount))
+   # Checagem se algum dado está atualmente sendo recebido.
+   EstePeriodo = time.time()
+   DiferencaPeriodo = EstePeriodo - EstePacoteRx.PeriodoBit
+   EsteSegundo = int(EstePeriodo)
+
+   if EsteSegundo != SegundoPassado:
+      sys.stdout.write(" RUIDO: {:d}      \r".format(RuidoCount))
       sys.stdout.flush()
-      NoiseCount = 0
-      LastSecond = ThisSecond
+      RuidoCount = 0
+      SegundoPassado = EsteSegundo
 
-   if len(ThisRxPacket.Data) == 0 or DiffPeriod < RX_END_PERIOD:
-      # If data level changes, log information about the data received, to be decoded when the RX data is complete.
-      GpioLevel = RPi.GPIO.input(GPIO_RX_PIN)
-      if GpioLevel != ThisRxPacket.LastGpioLevel:
-         if DiffPeriod < RX_REJECT_PERIOD:
-            NoiseCount += 1
+#/* -------------------------------------------------------------------------------------------------------------------- */
+
+   # Checando se ainda não é o fim da mensagem de dados.
+   if len(EstePacoteRx.Dados) == 0 or DiferencaPeriodo < PERIODO_FIM_RX:
+      # Se o nível de dados mudar, "logar" informações sobre os dados recebidos.
+      # Serão decodificados assim que os dados Rx estiverem completos.
+      NivelGpio = RPi.GPIO.input(PINO_GPIO_RX)
+      if NivelGpio != EstePacoteRx.NivelGpioPassado:
+         if DiferencaPeriodo < PERIODO_REJEITAR_RX:
+            RuidoCount += 1
          else:
-            ThisRxPacket.Data.append([ThisRxPacket.DataCount, GPIO_RX_PIN, ThisRxPacket.LastGpioLevel, DiffPeriod])
-            ThisRxPacket.DataCount += 1
-            ThisRxPacket.BitPeriod = ThisPeriod
-            ThisRxPacket.LastGpioLevel = GpioLevel
+            EstePacoteRx.Dados.append([EstePacoteRx.DadosCount, PINO_GPIO_RX, EstePacoteRx.NivelGpioPassado, DiferencaPeriodo])
+            EstePacoteRx.DadosCount += 1
+            # Registrando o período para calcular o tempo entre o fim desse período e o início do próximo,
+            # indicando um sinal longo HIGH ou curto LOW.
+            EstePacoteRx.PeriodoBit = EstePeriodo
+            # Registrando também qual o nível de dados atual para comparar com o próximo.
+            EstePacoteRx.NivelGpioPassado = NivelGpio
+
+#/* -------------------------------------------------------------------------------------------------------------------- */
+
+   # A mensagem de dados chegou ao fim.
    else:
-      # New log entry.
-      LogEntry = ""
-      BadDataFlag = False
+      # Nova entrada no log.
+      EntradaLog = ""
+      DadosRuinsFlag = False
 
-      # End of data detected, decode data.
-      Now = datetime.datetime.now()
+      # Fim dos dados detectado, decodificar dados.
+      Agora = datetime.datetime.now()
 
-      # Log the date and time of the RX data.
-      LogEntry += Now.strftime("%Y-%m-%d %H:%M:%S\n")
+      # Registrar a data e hora dos dados Rx.
+      EntradaLog += Agora.strftime("%Y-%m-%d %H:%M:%S\n")
 
-      # Calculate the data size once, for use later.
-      DataSize = len(ThisRxPacket.Data)
-      LogEntry += "DATA SIZE: {:d} ".format(DataSize)
+      # Calcular o tamanho dos dados uma vez, para usar depois.
+      TamanhoDados = len(EstePacoteRx.Dados)
+      EntradaLog += "TAMANHO DOS DADOS: {:d} ".format(TamanhoDados)
 
-      # Itterate though the data to find the smallest period for a high level and smallest period for a low level.
-      # This will be considered the TX data rate for high and low signals.
-      MinLowPeriodSeqCount = 0
-      MinLowPeriod = RX_END_PERIOD
-      MinHighPeriodSeqCount = 0
-      MinHighPeriod = RX_END_PERIOD
-      for DataRow in ThisRxPacket.Data:
-         # Ignore the first and last couple of periods in case they are noise.
-         if DataRow[DATA_SEQUENCE] > 2 and DataRow[DATA_SEQUENCE] < DataSize - 2:
-            if DataRow[DATA_LEVEL] == 0 and DataRow[DATA_PERIOD] < MinLowPeriod:
-               MinLowPeriodSeqCount = DataRow[DATA_SEQUENCE]
-               MinLowPeriod = DataRow[DATA_PERIOD]
-            if DataRow[DATA_LEVEL] == 1 and DataRow[DATA_PERIOD] < MinHighPeriod:
-               MinHighPeriodSeqCount = DataRow[DATA_SEQUENCE]
-               MinHighPeriod = DataRow[DATA_PERIOD]
-      LogEntry += "MIN LOW PERIOD: [{:d}] {:f} MIN HIGH PERIOD: [{:d}] {:f}\n".format(MinLowPeriodSeqCount, MinLowPeriod, MinHighPeriodSeqCount, MinHighPeriod)
+      # Iterar através dos dados para encontrar o menor período por um nível high e o menor período por um nível low.
+      # Isso vai ser considerado a taxa de dados Tx para sinais high e low.
+      MinPeriodoBaixoSeqCount = 0
+      MinPeriodoBaixo = PERIODO_FIM_RX
+      MinPeriodoAltoSeqCount = 0
+      MinPeriodoAlto = PERIODO_FIM_RX
+      for ColunaDados in EstePacoteRx.Dados:
+         # Ignorar alguns dos primeiros e últimos períodos caso eles sejam ruído.
+         if ColunaDados[SEQUENCIA_DADOS] > 2 and ColunaDados[SEQUENCIA_DADOS] < TamanhoDados - 2:
+            if ColunaDados[NIVEL_DADOS] == 0 and ColunaDados[PERIODO_DADOS] < MinPeriodoBaixo:
+               MinPeriodoBaixoSeqCount = ColunaDados[SEQUENCIA_DADOS]
+               MinPeriodoBaixo = ColunaDados[PERIODO_DADOS]
+            if ColunaDados[NIVEL_DADOS] == 1 and ColunaDados[PERIODO_DADOS] < MinPeriodoAlto:
+               MinPeriodoAltoSeqCount = ColunaDados[SEQUENCIA_DADOS]
+               MinPeriodoAlto = ColunaDados[PERIODO_DADOS]
+      EntradaLog += "PERIODO BAIXO MINIMO: [{:d}] {:f} PERIODO ALTO MINIMO: [{:d}] {:f}\n".format(MinPeriodoBaixoSeqCount, MinPeriodoBaixo, MinPeriodoAltoSeqCount, MinPeriodoAlto)
+      
+#/* -------------------------------------------------------------------------------------------------------------------- */
 
-      # Check for data that looks erronious and display an error rather than the data.
-      if MinLowPeriod == RX_END_PERIOD or MinHighPeriod == RX_END_PERIOD \
-         or MinLowPeriod < RX_REJECT_PERIOD or MinHighPeriod < RX_REJECT_PERIOD:
-         BadDataFlag = True
-         LogEntry += "! BAD DATA REJECTED (NOISY) !"
+      # Checando por dados que parecam errados e exibindo um erro ao invés dos dados caso eles sejam errôneos.
+      if MinPeriodoBaixo == PERIODO_FIM_RX or MinPeriodoAlto == PERIODO_FIM_RX \
+         or MinPeriodoBaixo < PERIODO_REJEITAR_RX or MinPeriodoAlto < PERIODO_REJEITAR_RX:
+         DadosRuinsFlag = True
+         EntradaLog += "! DADOS RUINS REJEITADOS !"
+      
       else:
-         # Data looks OK, so display the data in several formats to aid decoding of the data.
-         # Display binary data and store groups of eight bits as byte data for use later.
-         LogEntry += "\nBINARY DATA:\n"
-         BitDataCount = 0
-         AltBitDataCount = 0
-         ByteDataCount = 0
-         AltByteDataCount = 0
-         ByteData = []
-         AltByteData = []
-         if RX_BIT_INVERT == 0:
-            LevelTest = 0
+         # Se os dados parecerem OK, então exibir os dados em vários formatos para auxiliar na decodificação dos dados.
+         # Exibir dados binários e guardar grupos de 8 bits como dados de byte para uso posterior.
+         EntradaLog += "\nDADOS BINARIOS:\n"
+         DadosBitCount = 0
+         AltDadosBitCount = 0
+         DadosByteCount = 0
+         AltDadosByteCount = 0
+         DadosByte = []
+         AltDadosByte = []
+         
+         if INVERTER_BIT_RX == 0:
+            TesteNivel = 0
          else:
-            LevelTest = 1
-         for DataRow in ThisRxPacket.Data:
-            if DataRow[DATA_PERIOD] < RX_END_PERIOD:
-               if DataRow[DATA_LEVEL] == LevelTest:
-                  # Divide the data level period by the min period for the data level to calculate how many bits are of that level.
-                  BitCount = int(round(DataRow[DATA_PERIOD] / MinLowPeriod))
+            TesteNivel = 1
+         for ColunaDados in EstePacoteRx.Dados:
+            if ColunaDados[PERIODO_DADOS] < PERIODO_FIM_RX:
+               if ColunaDados[NIVEL_DADOS] == TesteNivel:
+                  
+                  # Dividindo o período de nível de dados pelo período mínimo para o nível de dados LOW para calcular quantos bits são desse nível.
+                  BitCount = int(round(ColunaDados[PERIODO_DADOS] / MinPeriodoBaixo))
                   for Count in range(BitCount):
-                     if ThisRxPacket.StartBitCount > 0:
-                        ThisRxPacket.StartBitCount -= 1
+                     if EstePacoteRx.BitsIniciaisCount > 0:
+                        EstePacoteRx.BitsIniciaisCount -= 1
                      else:
-                        if BitDataCount % 8 == 0:
-                           ByteData.append(0)
-                           ByteDataCount += 1
-                        BitDataCount += 1
-                        LogEntry += "0"
-                        ByteData[ByteDataCount - 1] = (ByteData[ByteDataCount - 1] << 1) + 0
+                        if DadosBitCount % 8 == 0:
+                           DadosByte.append(0)
+                           DadosByteCount += 1
+                        DadosBitCount += 1
+                        EntradaLog += "0"
+                        DadosByte[DadosByteCount - 1] = (DadosByte[DadosByteCount - 1] << 1) + 0
                else:
-                  # Divide the data level period by the min period for the data level to calculate how many bits are of that level.
-                  BitCount = int(round(DataRow[DATA_PERIOD] / MinHighPeriod))
+                  # Dividindo o período de nível de dados pelo período mínimo para o nível de dados HIGH para calcular quantos bits são desse nível.
+                  BitCount = int(round(ColunaDados[PERIODO_DADOS] / MinPeriodoAlto))
                   for Count in range(BitCount):
-                     if ThisRxPacket.StartBitCount > 0:
-                        ThisRxPacket.StartBitCount -= 1
+                     if EstePacoteRx.BitsIniciaisCount > 0:
+                        EstePacoteRx.BitsIniciaisCount -= 1
                      else:
-                        if BitDataCount % 8 == 0:
-                           ByteData.append(0)
-                           ByteDataCount += 1
-                        BitDataCount += 1
-                        LogEntry += "1"
-                        ByteData[ByteDataCount - 1] = (ByteData[ByteDataCount - 1] << 1) + 1
+                        if DadosBitCount % 8 == 0:
+                           DadosByte.append(0)
+                           DadosByteCount += 1
+                        DadosBitCount += 1
+                        EntradaLog += "1"
+                        DadosByte[DadosByteCount - 1] = (DadosByte[DadosByteCount - 1] << 1) + 1
 
                if BitCount <= 2:
-                  if ThisRxPacket.AltStartBitCount > 0:
-                     ThisRxPacket.AltStartBitCount -= 1
+                  if EstePacoteRx.AltBitsIniciaisCount > 0:
+                     EstePacoteRx.AltBitsIniciaisCount -= 1
                   else:
-                     if AltBitDataCount % 8 == 0:
-                        AltByteData.append(0)
-                        AltByteDataCount += 1
-                     AltBitDataCount += 1
+                     if AltDadosBitCount % 8 == 0:
+                        AltDadosByte.append(0)
+                        AltDadosByteCount += 1
+                     AltDadosBitCount += 1
                      if BitCount == 1:
-                        AltByteData[AltByteDataCount - 1] = (AltByteData[AltByteDataCount - 1] << 1) + 0
+                        AltDadosByte[AltDadosByteCount - 1] = (AltDadosByte[AltDadosByteCount - 1] << 1) + 0
                      elif BitCount == 2:
-                        AltByteData[AltByteDataCount - 1] = (AltByteData[AltByteDataCount - 1] << 1) + 1
+                        AltDadosByte[AltDadosByteCount - 1] = (AltDadosByte[AltDadosByteCount - 1] << 1) + 1
 
-         # Display the byte data in hex format.
-         LogEntry += "\n\nHEX DATA:\n"
-         DataCount = 0
-         ZeroTest = 0
-         for Byte in ByteData:
-            ZeroTest = (ZeroTest | Byte)
-            LogEntry += "{:02X} ".format(Byte)
-            DataCount += 1
-            if DataCount % 26 == 0:
-               LogEntry += "\n"
-         # Flag all zero data as bad data.
-         if ZeroTest == 0:
-            BadDataFlag = True
-            LogEntry += "! BAD DATA REJECTED (ZERO) !"
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* -------------------------------------------------------------------------------------------------------------------- */
 
-         # Received data decoded from single bit run = 0, double bit run = 1.
-         LogEntry += "\n\nALT HEX DATA:\n"
-         RxSignatureCount = RX_SIGNATURE_SIZE
-         RxSignature = ""
-         DataCount = 0
-         ZeroTest = 0
-         for Byte in AltByteData:
-            ZeroTest = (ZeroTest | Byte)
-            LogEntry += "{:02X} ".format(Byte)
-            if RxSignatureCount > 0:
-               RxSignatureCount -= 1
-               RxSignature += "{:02X} ".format(Byte)
-            DataCount += 1
-            if DataCount % 26 == 0:
-               LogEntry += "\n"
-         LogEntry += "\n\nRX SIGNATURE: {:s}".format(RxSignature)
-         # Flag bad signiture data as bad data.
-         if RxSignatureCount > 0:
-            BadDataFlag = True
-            LogEntry += "! BAD DATA REJECTED (SIGNATURE) !"
-         # Flag all zero data as bad data.
-         if ZeroTest == 0:
-            BadDataFlag = True
-            LogEntry += "! BAD DATA REJECTED (ZERO) !"
+         # Exibindo os dados de byte em formato hexadecimal.
+         EntradaLog += "\n\nDADOS HEXADECIMAIS:\n"
+         DadosCount = 0
+         TesteZero = 0
+         for Byte in DadosByte:
+            TesteZero = (TesteZero | Byte)
+            EntradaLog += "{:02X} ".format(Byte)
+            DadosCount += 1
+            if DadosCount % 26 == 0:
+               EntradaLog += "\n"
+         # sinalizar todos os dados zerados como dados ruins.
+         if TesteZero == 0:
+            DadosRuinsFlag = True
+            EntradaLog += "! DADOS RUINS REJEITADOS (ZERO) !"
 
-         # Display the byte data in decimal format.
-         LogEntry += "\n\nBYTE DATA:\n"
-         DataCount = 0
-         for Byte in AltByteData:
-            LogEntry += "{:3d} ".format(Byte)
-            DataCount += 1
-            if DataCount % 19 == 0:
-               LogEntry += "\n"
+         # Dados decodificados recebidos por "single bit run" = 0, "double bit run" = 1.
+         EntradaLog += "\n\nDADOS HEXADECIMAIS ALTERNATIVOS:\n"
+         AssinaturaRxCount = TAMANHO_ASSINATURA_RX
+         AssinaturaRx = ""
+         DadosCount = 0
+         TesteZero = 0
+         for Byte in AltDadosByte:
+            TesteZero = (TesteZero | Byte)
+            EntradaLog += "{:02X} ".format(Byte)
+            if AssinaturaRxCount > 0:
+               AssinaturaRxCount -= 1
+               AssinaturaRx += "{:02X} ".format(Byte)
+            DadosCount += 1
+            if DadosCount % 26 == 0:
+               EntradaLog += "\n"
+         EntradaLog += "\n\nASSINATURA RX: {:s}".format(AssinaturaRx)
+         # sinalizar dados da assinatura ruins como dados ruins.
+         if AssinaturaRxCount > 0:
+            DadosRuinsFlag = True
+            EntradaLog += "! DADOS RUINS REJEITADOS (ASSINATURA) !"
+         
+         # sinalizar todos os dados zerados como dados ruins.
+         if TesteZero == 0:
+            DadosRuinsFlag = True
+            EntradaLog += "! DADOS RUINS REJEITADOS (ZERO) !"
 
-         # Display pairs of the byte data as 16 bit words in decimal format.
-         LogEntry += "\n\nWORD DATA OFFSET 0:\n"
-         DataWord = 0
-         DataCount = 0
-         for Byte in AltByteData:
-            if DataCount % 2 == 0:
-               DataWord = Byte
+#/* -------------------------------------------------------------------------------------------------------------------- */
+
+         # Exibindo os dados de byte em formato de byte (*eu acho)
+         EntradaLog += "\n\nDADOS BYTE:\n"
+         DadosCount = 0
+         for Byte in AltDadosByte:
+            EntradaLog += "{:3d} ".format(Byte)
+            DadosCount += 1
+            if DadosCount % 19 == 0:
+               EntradaLog += "\n"
+
+
+         # Exibindo pares dos dados de byte como palavras de 16 bits em formato decimal.
+         EntradaLog += "\n\nDESVIO DE DADOS DE PALAVRA 0:\n"
+         DadosPalavra = 0
+         DadosCount = 0
+         for Byte in AltDadosByte:
+            if DadosCount % 2 == 0:
+               DadosPalavra = Byte
             else:
-               DataWord = (DataWord << 8) + Byte
-               LogEntry += "{:6d} ".format(DataWord)
+               DadosPalavra = (DadosPalavra << 8) + Byte
+               EntradaLog += "{:6d} ".format(DadosPalavra)
 
-            DataCount += 1
-            if DataCount % 20 == 0:
-               LogEntry += "\n"
+            DadosCount += 1
+            if DadosCount % 20 == 0:
+               EntradaLog += "\n"
 
-         # Display pairs of the byte data as 16 bit words in decimal format, offset the data by one byte.
-         LogEntry += "\n\nWORD DATA OFFSET 1:\n"
-         DataWord = 0
-         DataCount = 0
-         for Byte in AltByteData:
-            if DataCount % 2 == 1:
-               DataWord = Byte
+
+         # Exibindo pares dos dados de byte como palavras de 16 bits em formato decimal, desviando (offset) os dados por um bit.
+         EntradaLog += "\n\nDESVIO DE DADOS DE PALAVRA 1:\n"
+         DadosPalavra = 0
+         DadosCount = 0
+         for Byte in AltDadosByte:
+            if DadosCount % 2 == 1:
+               DadosPalavra = Byte
             else:
-               DataWord = (DataWord << 8) + Byte
-               LogEntry += "{:6d} ".format(DataWord)
+               DadosPalavra = (DadosPalavra << 8) + Byte
+               EntradaLog += "{:6d} ".format(DadosPalavra)
 
-            DataCount += 1
-            if DataCount % 20 == 0:
-               LogEntry += "\n"
+            DadosCount += 1
+            if DadosCount % 20 == 0:
+               EntradaLog += "\n"
 
-         # Display the byte data in ASCII format.
-         LogEntry += "\n\nCHARACTER DATA:\n"
-         for Byte in AltByteData:
-            LogEntry += "{:s}".format(chr(Byte))
 
-      # Reset data ready to receive next RX data.
-      LogEntry += "\n\n\n"
+         # Exibindo os dados de byte em formato ASCII.
+         EntradaLog += "\n\nDADOS CARACTERES:\n"
+         for Byte in AltDadosByte:
+            EntradaLog += "{:s}".format(chr(Byte))
 
-      if BadDataFlag == True:
-         NoiseCount += 1
 
-      if BadDataFlag == False or (BadDataFlag == True and LOG_BAD_DATA == True):
-         # Open a daily log file.
-         LogFile = open("LOG/{:s}_433MHz.log".format(Now.strftime("%Y-%m-%d")), 'a', 0)
-         WriteLogLine(LogFile, LogEntry)
+#/* -------------------------------------------------------------------------------------------------------------------- */
+
+      # Resetando dados prontos para receber os próximos dados Rx.
+      EntradaLog += "\n\n\n"
+
+      if DadosRuinsFlag == True:
+         RuidoCount += 1
+
+      if DadosRuinsFlag == False or (DadosRuinsFlag == True and REGISTRAR_DADOS_RUINS == True):
+         # Abrindo um arquivo log diário.
+         ArquivoLog = open("LOG/{:s}_433MHz.log".format(Agora.strftime("%Y-%m-%d")), 'a', 0)
+         EscreveLinhaLog(ArquivoLog, EntradaLog)
          sys.stdout.flush()
-         LogFile.close()
+         ArquivoLog.close()
 
-      # Initialise a new data packet capture.
-      DataInit(ThisRxPacket)
+      # Inicializando uma nova captura de pacote de dados.
+      DataInit(EstePacoteRx)
 
+
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* -------------------------------------------------------------------------------------------------------------------- */
+#/* -------------------------------------------------------------------------------------------------------------------- */
