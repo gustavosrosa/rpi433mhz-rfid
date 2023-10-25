@@ -104,6 +104,7 @@ DadosByte = []
 # Está em ordem lógica que deve chegar no receptor, primeiro a assinatura para identificar que é uma mensagem,
 # depois o tamanho dos dados para se preparar, então os dados em si, e por fim o checksum para confirmação de integridade dos dados.
 PacoteDados = {
+   "ID_DISPOSITIVO": 0,
    "ASSINATURA": [],
    "COMPRIMENTO_DADOS": 0,
    "DADOS": [],
